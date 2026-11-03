@@ -23,7 +23,7 @@ struct Lexer: ~Copyable, ~Escapable {
         let (date, format) = try lexDate()
         var components = RawComponents(date: date)
         guard !isAtEnd else { return components }
-        guard let format, consume(.uppercaseT) || consume(.lowercaseT) || consume(.space) else {
+        guard let format, consume(.timeDesignator) else {
             throw .unexpectedCharacter(at: position)
         }
         components.time = try lexTime(format)
@@ -39,31 +39,36 @@ extension Lexer {
     /// `format` is nil for reduced-precision dates, which cannot be followed by a time.
     private typealias LexedDate = (date: RawComponents.DatePart, format: Format?)
 
+    /// Expanded representations carry exactly two extra year digits, so `+` always means expanded
+    /// (`+0019` is century 19). `-` with four digits is a plain negative year (`-0001`).
     private mutating func lexDate() throws(ISO8601ParseError) -> LexedDate {
         let negative = consumeSign()
         let run = try digits()
+        let value = negative == true ? -run.value : run.value
         let year: Int
         switch (negative, run.count) {
-        case (nil, 4):
-            year = run.value
-        case (nil, 7):
-            return (.ordinal(year: run.value / 1000, day: run.value % 1000), .basic)
-        case (nil, 8):
-            return (.calendar(year: run.value / 10000, month: run.value / 100 % 100, day: run.value % 100), .basic)
-        case (let negative?, 4...):
-            year = negative ? -run.value : run.value
+        case (nil, 2), (false, 4):
+            return (.century(value), nil)
+        case (nil, 3), (_?, 5):
+            return (.decade(value), nil)
+        case (nil, 4), (true, 4), (_?, 6):
+            year = value
+        case (nil, 7), (true, 7), (_?, 9):
+            return (.ordinal(year: value / 1000, day: run.value % 1000), .basic)
+        case (nil, 8), (true, 8), (_?, 10):
+            return (.calendar(year: value / 10000, month: run.value / 100 % 100, day: run.value % 100), .basic)
         default:
             throw .invalidDigitCount(run.count, at: run.start)
         }
 
         if isAtEnd { return (.year(year), nil) }
         if consume(.hyphen) { return try lexExtendedDate(year: year) }
-        if consume(.uppercaseW) { return try lexBasicWeekDate(year: year) }
+        if consume(.weekDesignator) { return try lexBasicWeekDate(year: year) }
         throw .unexpectedCharacter(at: position)
     }
 
     private mutating func lexExtendedDate(year: Int) throws(ISO8601ParseError) -> LexedDate {
-        if consume(.uppercaseW) {
+        if consume(.weekDesignator) {
             let week = try digits()
             switch week.count {
             case 2: break
@@ -134,7 +139,7 @@ extension Lexer {
     }
 
     private mutating func lexOffset(_ format: Format) throws(ISO8601ParseError) -> RawComponents.Offset? {
-        if consume(.uppercaseZ) || consume(.lowercaseZ) { return .utc }
+        if consume(.utcDesignator) { return .utc }
         guard let negative = consumeSign() else { return nil }
         let run = try digits()
         switch (format, run.count) {
@@ -229,10 +234,7 @@ extension UInt8 {
     fileprivate static let colon = UInt8(ascii: ":")
     fileprivate static let period = UInt8(ascii: ".")
     fileprivate static let comma = UInt8(ascii: ",")
-    fileprivate static let space = UInt8(ascii: " ")
-    fileprivate static let uppercaseT = UInt8(ascii: "T")
-    fileprivate static let lowercaseT = UInt8(ascii: "t")
-    fileprivate static let uppercaseW = UInt8(ascii: "W")
-    fileprivate static let uppercaseZ = UInt8(ascii: "Z")
-    fileprivate static let lowercaseZ = UInt8(ascii: "z")
+    fileprivate static let timeDesignator = UInt8(ascii: "T")
+    fileprivate static let weekDesignator = UInt8(ascii: "W")
+    fileprivate static let utcDesignator = UInt8(ascii: "Z")
 }

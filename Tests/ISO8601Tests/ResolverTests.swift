@@ -12,6 +12,10 @@ private let dec31of2016 = RawComponents.DatePart.calendar(year: 2016, month: 12,
 private let jan15 = RawComponents.DatePart.calendar(year: 2024, month: 1, day: 15)
 
 private let dates: [(RawComponents.DatePart, TimeInterval)] = [
+    (.century(19), -2_208_988_800),
+    (.century(0), -62_167_219_200),
+    (.decade(198), 315_532_800),
+    (.decade(-198), -124_649_971_200),
     (.year(2024), 1_704_067_200),
     (.month(year: 2024, month: 2), 1_706_745_600),
     (.month(year: 2024, month: 12), 1_733_011_200),

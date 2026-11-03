@@ -13,8 +13,16 @@ let package = Package(
     products: [
         .library(name: "ISO8601", targets: ["ISO8601"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/jpsim/Yams", from: "6.0.0"),
+    ],
     targets: [
         .target(name: "ISO8601", swiftSettings: swiftSettings),
         .testTarget(name: "ISO8601Tests", dependencies: ["ISO8601"], swiftSettings: swiftSettings),
+        .testTarget(
+            name: "ISO8601ConformanceTests",
+            dependencies: ["ISO8601", .product(name: "Yams", package: "Yams")],
+            swiftSettings: swiftSettings
+        ),
     ]
 )

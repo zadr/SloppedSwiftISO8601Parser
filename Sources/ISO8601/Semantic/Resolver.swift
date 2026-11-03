@@ -39,6 +39,12 @@ struct Resolver {
 
     private static func epochDay(_ date: RawComponents.DatePart) throws(ISO8601ParseError) -> Int {
         switch date {
+        case .century(let century):
+            return try epochDay(.year(century * 100))
+
+        case .decade(let decade):
+            return try epochDay(.year(decade * 10))
+
         case .year(let year):
             try validate(.year, year, in: yearRange)
             return CivilCalendar.epochDay(year: year, month: 1, day: 1)

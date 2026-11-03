@@ -1,6 +1,10 @@
 /// Lexical output: fields in a syntactically valid arrangement, values not yet range-checked.
 struct RawComponents: Hashable, Sendable {
     enum DatePart: Hashable, Sendable {
+        /// `19` is 1900 through 1999.
+        case century(Int)
+        /// `198` is 1980 through 1989.
+        case decade(Int)
         case year(Int)
         case month(year: Int, month: Int)
         case calendar(year: Int, month: Int, day: Int)
