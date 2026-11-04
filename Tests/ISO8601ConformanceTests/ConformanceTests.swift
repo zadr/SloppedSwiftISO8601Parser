@@ -29,9 +29,8 @@ struct ConformanceTests {
         switch testCase.testType {
         case "parsing":
             let expression = try #require(testCase.expression)
-            let raw = try lex(expression)
-            #expect(Self.keyPaths(raw) == testCase.expectComponents)
-            #expect(throws: Never.self) { try Resolver(timeZone: .gmt).resolve(raw) }
+            let expected = try #require(Self.components(testCase.expectComponents))
+            #expect(try ISO8601Parser().parse(expression) == Resolver.resolve(expected) { _ in 0 })
 
         case "validity":
             let expression = try #require(testCase.expression)
@@ -50,63 +49,54 @@ struct ConformanceTests {
         }
     }
 
-    private func lex(_ expression: String) throws(ISO8601ParseError) -> RawComponents {
-        var expression = expression
-        expression.makeContiguousUTF8()
-        return try Lexer(expression.utf8.span).lex()
-    }
+    /// `RawComponents` from the suite's component vocabulary, or nil for a key path outside it.
+    private static func components(_ paths: [String: String]?) -> RawComponents? {
+        guard var paths else { return nil }
+        func take(_ key: String) -> Int? { paths.removeValue(forKey: key).flatMap { Int($0) } }
 
-    /// `RawComponents` in the suite's component vocabulary.
-    private static func keyPaths(_ raw: RawComponents) -> [String: String] {
-        var paths: [String: String] = [:]
-        func set(_ key: String, _ value: Int) { paths[key] = String(value) }
-
-        switch raw.date {
-        case .century(let century):
-            set("calendar.century", century)
-        case .decade(let decade):
-            set("calendar.decade", decade)
-        case .year(let year):
-            set("calendar.year", year)
-        case .month(let year, let month):
-            set("calendar.year", year)
-            set("calendar.month", month)
-        case .calendar(let year, let month, let day):
-            set("calendar.year", year)
-            set("calendar.month", month)
-            set("calendar.day", day)
-        case .ordinal(let year, let day):
-            set("ordinal.year", year)
-            set("ordinal.day_of_year", day)
-        case .week(let year, let week, let weekday):
-            set("week.week_year", year)
-            set("week.week", week)
-            if let weekday { set("week.day_of_week", weekday) }
-        }
-
-        if let time = raw.time {
-            set("time.hour", time.hour)
-            if let minute = time.minute { set("time.minute", minute) }
-            if let second = time.second { set("time.second", second) }
-            if let fraction = time.fraction {
-                let unit = time.second != nil ? "second" : time.minute != nil ? "minute" : "hour"
-                set("time.fractional_\(unit).value", fraction.digits)
-                set("time.fractional_\(unit).precision", fraction.scale)
+        let date: RawComponents.DatePart
+        if let century = take("calendar.century") {
+            date = .century(century)
+        } else if let decade = take("calendar.decade") {
+            date = .decade(decade)
+        } else if let year = take("week.week_year") {
+            guard let week = take("week.week") else { return nil }
+            date = .week(year: year, week: week, weekday: take("week.day_of_week"))
+        } else if let year = take("ordinal.year") {
+            guard let day = take("ordinal.day_of_year") else { return nil }
+            date = .ordinal(year: year, day: day)
+        } else if let year = take("calendar.year") {
+            if let month = take("calendar.month") {
+                date = take("calendar.day").map { .calendar(year: year, month: month, day: $0) }
+                    ?? .month(year: year, month: month)
+            } else {
+                date = .year(year)
             }
+        } else {
+            return nil
         }
 
-        switch raw.offset {
-        case nil:
-            break
-        case .utc:
-            paths["time.utc_offset.sign"] = "+"
-            set("time.utc_offset.hours", 0)
-            set("time.utc_offset.minutes", 0)
-        case .fixed(let negative, let hours, let minutes):
-            paths["time.utc_offset.sign"] = negative ? "-" : "+"
-            set("time.utc_offset.hours", hours)
-            set("time.utc_offset.minutes", minutes)
+        var time: RawComponents.TimePart?
+        if let hour = take("time.hour") {
+            let minute = take("time.minute")
+            let second = take("time.second")
+            let (precision, unit): (RawComponents.TimePart.Precision, String) =
+                second != nil ? (.second, "second") : minute != nil ? (.minute, "minute") : (.hour, "hour")
+            var fraction = RawComponents.Fraction(digits: 0, power: 1)
+            if let digits = take("time.fractional_\(unit).value"), let scale = take("time.fractional_\(unit).precision") {
+                fraction.digits = digits
+                for _ in 0..<scale { fraction.power *= 10 }
+            }
+            time = .init(hour: hour, minute: minute ?? 0, second: second ?? 0, fraction: fraction, precision: precision)
         }
-        return paths
+
+        var offset: RawComponents.Offset?
+        if let hours = take("time.utc_offset.hours") {
+            let sign = paths.removeValue(forKey: "time.utc_offset.sign")
+            offset = .fixed(negative: sign == "-", hours: hours, minutes: take("time.utc_offset.minutes") ?? 0)
+        }
+
+        guard paths.isEmpty else { return nil }
+        return RawComponents(date: date, time: time, offset: offset)
     }
 }

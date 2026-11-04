@@ -35,19 +35,18 @@ public struct ISO8601Parser: Hashable, Sendable {
         self.timeZone = timeZone
     }
 
-    public func parse(_ string: consuming String) throws(ISO8601ParseError) -> Date {
-        string.makeContiguousUTF8()
-        return try parse(utf8: string.utf8.span)
+    public func parse(_ string: borrowing String) throws(ISO8601ParseError) -> Date {
+        try parse(utf8: string.utf8.span)
     }
 
+    @inline(__always)
     public func parse(utf8 bytes: Span<UInt8>) throws(ISO8601ParseError) -> Date {
-        let components = try Lexer(bytes).lex()
-        return try Resolver(timeZone: timeZone).resolve(components)
+        try Lexer(bytes).lex { Resolver.zoneOffset(atLocal: $0, in: timeZone) }
     }
 }
 
 extension Date {
-    public init(iso8601 string: consuming String, timeZone: TimeZone = .gmt) throws(ISO8601ParseError) {
-        self = try ISO8601Parser(timeZone: timeZone).parse(string)
+    public init(iso8601 string: borrowing String, timeZone: TimeZone = .gmt) throws(ISO8601ParseError) {
+        self = try Lexer(string.utf8.span).lex { Resolver.zoneOffset(atLocal: $0, in: timeZone) }
     }
 }

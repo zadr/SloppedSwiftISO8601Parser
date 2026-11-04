@@ -3,7 +3,11 @@ import Testing
 @testable import ISO8601
 
 private func resolve(_ raw: RawComponents, in timeZone: TimeZone = .gmt) throws(ISO8601ParseError) -> TimeInterval {
-    try Resolver(timeZone: timeZone).resolve(raw).timeIntervalSince1970
+    try Resolver.resolve(raw) { local in Resolver.zoneOffset(atLocal: local, in: timeZone) }.timeIntervalSince1970
+}
+
+private func resolve(_ raw: RawComponents, fixedOffset: Int) throws(ISO8601ParseError) -> TimeInterval {
+    try Resolver.resolve(raw) { _ in fixedOffset }.timeIntervalSince1970
 }
 
 private let newYork = TimeZone(identifier: "America/New_York")!
@@ -202,6 +206,16 @@ struct ResolverTests {
         // 23:59:60 EST is 04:59:60Z.
         #expect(throws: ISO8601ParseError.invalidLeapSecond) {
             try resolve(RawComponents(dec31of2016, .at(23, 59, 60)), in: newYork)
+        }
+    }
+
+    @Test func resolvesWithFixedOffset() throws {
+        #expect(try resolve(RawComponents(jan15, .at(12)), fixedOffset: 3600) == 1_705_316_400)
+        #expect(try resolve(RawComponents(jan15), fixedOffset: -18_000) == 1_705_294_800)
+        #expect(try resolve(RawComponents(jan15, .at(12), .utc), fixedOffset: 3600) == 1_705_320_000)
+        #expect(try resolve(RawComponents(dec31of2016, .at(23, 59, 60)), fixedOffset: 0) == 1_483_228_800)
+        #expect(throws: ISO8601ParseError.invalidLeapSecond) {
+            try resolve(RawComponents(dec31of2016, .at(23, 59, 60)), fixedOffset: 3600)
         }
     }
 }

@@ -1,8 +1,14 @@
+import Foundation
 import Testing
 @testable import ISO8601
 
-func lex(_ s: String) throws(ISO8601ParseError) -> RawComponents {
-    try Lexer(s.utf8.span).lex()
+/// What the parser must produce for `raw`, read in UTC.
+private func resolved(_ raw: RawComponents) throws(ISO8601ParseError) -> Date {
+    try Resolver.resolve(raw) { _ in 0 }
+}
+
+private func parse(_ s: String) throws(ISO8601ParseError) -> Date {
+    try ISO8601Parser().parse(s)
 }
 
 extension RawComponents {
@@ -13,7 +19,21 @@ extension RawComponents {
 
 extension RawComponents.TimePart {
     static func at(_ hour: Int, _ minute: Int? = nil, _ second: Int? = nil, fraction: RawComponents.Fraction? = nil) -> Self {
-        Self(hour: hour, minute: minute, second: second, fraction: fraction)
+        Self(
+            hour: hour,
+            minute: minute ?? 0,
+            second: second ?? 0,
+            fraction: fraction ?? .init(digits: 0, power: 1),
+            precision: second != nil ? .second : minute != nil ? .minute : .hour
+        )
+    }
+}
+
+extension RawComponents.Fraction {
+    init(digits: Int, scale: Int) {
+        var power = 1
+        for _ in 0..<scale { power *= 10 }
+        self.init(digits: digits, power: power)
     }
 }
 
@@ -34,10 +54,6 @@ private let dates: [(String, RawComponents.DatePart)] = [
     ("2024W01", .week(year: 2024, week: 1, weekday: nil)),
     ("2024-W01-3", .week(year: 2024, week: 1, weekday: 3)),
     ("2024W013", .week(year: 2024, week: 1, weekday: 3)),
-    // Ranges are checked by the Resolver.
-    ("2024-13-45", .calendar(year: 2024, month: 13, day: 45)),
-    ("2024-000", .ordinal(year: 2024, day: 0)),
-    ("2024W990", .week(year: 2024, week: 99, weekday: 0)),
     ("+001985", .year(1985)),
     ("+00198", .decade(198)),
     ("+0019", .century(19)),
@@ -95,7 +111,6 @@ private let dateTimes: [(String, RawComponents)] = [
     ("2024-01-02T10:30:45-05:30", RawComponents(jan2, .at(10, 30, 45), .fixed(negative: true, hours: 5, minutes: 30))),
     ("2024-01-02T10:30:45\u{2212}05:30", RawComponents(jan2, .at(10, 30, 45), .fixed(negative: true, hours: 5, minutes: 30))),
     ("2024-01-02T10:30:45-00:00", RawComponents(jan2, .at(10, 30, 45), .fixed(negative: true, hours: 0, minutes: 0))),
-    ("2024-01-02T10:30:45+99:99", RawComponents(jan2, .at(10, 30, 45), .fixed(negative: false, hours: 99, minutes: 99))),
     (
         "2024-01-02T10:30.5+01:00",
         RawComponents(jan2, .at(10, 30, fraction: .init(digits: 5, scale: 1)), .fixed(negative: false, hours: 1, minutes: 0))
@@ -104,6 +119,14 @@ private let dateTimes: [(String, RawComponents)] = [
     ("20240102T103045+0130", RawComponents(jan2, .at(10, 30, 45), .fixed(negative: false, hours: 1, minutes: 30))),
     ("20240102T103045-08", RawComponents(jan2, .at(10, 30, 45), .fixed(negative: true, hours: 8, minutes: 0))),
     ("20240102T103045\u{2212}0800", RawComponents(jan2, .at(10, 30, 45), .fixed(negative: true, hours: 8, minutes: 0))),
+]
+
+/// Well-formed representations whose values are out of range.
+private let outOfRange: [(String, ISO8601ParseError)] = [
+    ("2024-13-45", .outOfRange(.month, value: 13)),
+    ("2024-000", .outOfRange(.ordinalDay, value: 0)),
+    ("2024W990", .outOfRange(.week, value: 99)),
+    ("2024-01-02T10:30:45+99:99", .outOfRange(.offsetHour, value: 99)),
 ]
 
 private let errors: [(String, ISO8601ParseError)] = [
@@ -123,6 +146,7 @@ private let errors: [(String, ISO8601ParseError)] = [
     ("\u{2212}20", .invalidDigitCount(2, at: 3)),
     ("+1234567890123456789", .invalidDigitCount(19, at: 1)),
     ("1234567890123456789", .invalidDigitCount(19, at: 0)),
+    ("12345678901234567890", .invalidDigitCount(20, at: 0)),
     ("2", .invalidDigitCount(1, at: 0)),
     ("20240", .invalidDigitCount(5, at: 0)),
     ("202401", .invalidDigitCount(6, at: 0)),
@@ -207,19 +231,25 @@ private let errors: [(String, ISO8601ParseError)] = [
     ("2024-01-02T10:30:45\u{2212}05:00x", .unexpectedCharacter(at: 27)),
 ]
 
+/// Lexical coverage through the parser: each representation must read as its components do.
 struct LexerTests {
     @Test(arguments: dates)
     func lexesDate(_ input: String, _ expected: RawComponents.DatePart) throws {
-        #expect(try lex(input) == RawComponents(expected))
+        #expect(try parse(input) == resolved(RawComponents(expected)))
     }
 
     @Test(arguments: dateTimes)
     func lexesDateTime(_ input: String, _ expected: RawComponents) throws {
-        #expect(try lex(input) == expected)
+        #expect(try parse(input) == resolved(expected))
+    }
+
+    @Test(arguments: outOfRange)
+    func rejectsOutOfRange(_ input: String, _ error: ISO8601ParseError) {
+        #expect(throws: error) { try parse(input) }
     }
 
     @Test(arguments: errors)
     func rejects(_ input: String, _ error: ISO8601ParseError) {
-        #expect(throws: error) { try lex(input) }
+        #expect(throws: error) { try parse(input) }
     }
 }
